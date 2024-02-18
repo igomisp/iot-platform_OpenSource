@@ -1,0 +1,165 @@
+version: "3.8"
+services:
+  # Orion is the context broker
+  orion:
+    labels:
+      org.fiware: 'deployment'
+    image: quay.io/fiware/orion:${ORION_VERSION}
+    hostname: ${ORION_HOST}
+    container_name: fiware-orion
+    depends_on:
+      - mongo-db
+    networks:
+      - default
+    expose:
+      - "${ORION_PORT}"
+    # hostport:containerport
+    ports:
+      - "${ORION_EXT_PORT}:${ORION_PORT}"
+    command: -dbhost mongo-db -logLevel DEBUG
+    healthcheck:
+      test: curl --fail -s http://${ORION_HOST}:${ORION_PORT}/version || exit 1
+      interval: 5s
+
+  iot-agent:
+    labels:
+      org.fiware: 'deployment'
+    image: quay.io/fiware/iotagent-ul:${ULTRALIGHT_VERSION}
+    hostname: ${IOTA_HOST}
+    container_name: fiware-iot-agent
+    depends_on:
+      - mongo-db
+    networks:
+      - default
+    expose:
+      - "${IOTA_NORTH_PORT}"
+    ports:
+      - "${IOTA_EXT_NORTH_PORT}:${IOTA_NORTH_PORT}" # localhost:4041
+    environment:
+      - IOTA_CB_HOST=${ORION_HOST} # name of the context broker to update context
+      - IOTA_CB_PORT=${ORION_PORT} # port the context broker listens on to update context
+      - IOTA_NORTH_PORT=${IOTA_NORTH_PORT}
+      - IOTA_REGISTRY_TYPE=mongodb #Whether to hold IoT device info in memory or in a database
+      - IOTA_LOG_LEVEL=DEBUG # The log level of the IoT Agent
+      - IOTA_TIMESTAMP=true # Supply timestamp information with each measurement
+      - IOTA_CB_NGSI_VERSION=v2 # use NGSIv2 when sending updates for active attributes
+      - IOTA_AUTOCAST=true # Ensure Ultralight number values are read as numbers not strings
+      - IOTA_MONGO_HOST=${MONGO_DB_HOST} # The host name of MongoDB
+      - IOTA_MONGO_PORT=${MONGO_DB_PORT} # The port mongoDB is listening on
+      - IOTA_MONGO_DB=iotagentul # The name of the database used in mongoDB
+      - IOTA_MQTT_HOST=${MQTT_SERVER_HOST} # The host name of the MQTT Broker
+      - IOTA_MQTT_PORT=${MQTT_PORT} # The port the MQTT Broker is listening on to receive topics
+      - IOTA_MQTT_USERNAME=${MQTT_USERNAME}
+      - IOTA_MQTT_PASSWORD=${MQTT_PASSWORD}
+      - IOTA_DEFAULT_RESOURCE= # Default is blank. I'm using MQTT so I don't need a resource
+      - IOTA_PROVIDER_URL=http://${IOTA_HOST}:${IOTA_NORTH_PORT}
+      - IOTA_DEFAULT_TRANSPORT=MQTT
+    healthcheck:
+      interval: 5s
+
+  # Database
+  mongo-db:
+    labels:
+      org.fiware: 'deployment'
+    image: mongo:${MONGO_DB_VERSION}
+    hostname: ${MONGO_DB_HOST}
+    container_name: fiware-db-mongo
+    expose:
+      - "${MONGO_DB_PORT}"
+    ports:
+      - "${MONGO_DB_EXT_PORT}:${MONGO_DB_PORT}" # localhost:27017
+    networks:
+      - default
+    volumes:
+      - mongo-db_db:/data/db
+      - mongo-db_config:/data/configdb
+    healthcheck:
+      test: |
+        host=`hostname --ip-address || echo '127.0.0.1'`; 
+        mongo --quiet $host/test --eval 'quit(db.runCommand({ ping: 1 }).ok ? 0 : 2)' && echo 0 || echo 1
+      interval: 5s
+
+  quantumleap:
+    labels:
+      org.fiware: 'deployment'
+    image: orchestracities/quantumleap:${QUANTUMLEAP_VERSION}
+    hostname: ${QUANTUMLEAP_HOST}
+    container_name: fiware-quantumleap
+    ports:
+        - "${QUANTUMLEAP_EXT_PORT}:${QUANTUMLEAP_PORT}"
+    depends_on:
+        - crate-db
+    environment:
+        - CRATE_HOST=${CRATE_HOST}
+        - LOGLEVEL=DEBUG
+    networks:
+      default:
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "-s", "http://${ORION_HOST}:${ORION_PORT}/version"]
+      interval: 5s
+
+  crate-db:
+    labels:
+      org.fiware: 'deployment'
+    image: crate:${CRATE_VERSION}
+    hostname: ${CRATE_HOST}
+    container_name: fiware-cratedb
+    ports:
+        # Admin UI
+        - "${CRATE_EXT_PORT}:${CRATE_PORT}"
+        # Transport protocol
+        - "${CRATE_EXT_TRANSPORT_PORT}:${CRATE_TRANSPORT_PORT}"
+    command:
+        crate -Cdiscovery.type=single-node
+    environment:
+        - CRATE_HEAP_SIZE=2g
+    networks:
+      default:
+    volumes:
+        - crate-db_db:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "-s", "http://${CRATE_HOST}:${CRATE_EXT_PORT}/"]
+      interval: 2s
+      timeout: 1s
+      retries: 10
+  
+  # Dash app
+  dash:
+    labels:
+      org.fiware: 'deployment'
+    image: igomisp/iot-gui:0.2.1
+    hostname: ${GUI_HOST}
+    container_name: fiware-dash
+    depends_on:
+      crate-db:
+        condition: service_healthy
+    environment:
+        - ORION_HOST=${ORION_HOST}
+        - CRATE_HOST=${CRATE_HOST}
+        - QUANTUMLEAP_HOST=${QUANTUMLEAP_HOST}
+        - QUANTUMLEAP_EXT_PORT=${QUANTUMLEAP_EXT_PORT}
+        - IOTA_HOST=${IOTA_HOST}
+        - IOTA_EXT_NORTH_PORT=${IOTA_EXT_NORTH_PORT}
+        - DASH_PORT=${DASH_PORT}
+        - MAPBOX_TOKEN=${MAPBOX_TOKEN}
+        - DASH_USER=${DASH_USER}
+        - DASH_PASS=${DASH_PASS}
+    expose:
+      - "${DASH_PORT}"
+    ports:
+      - "${DASH_EXT_PORT}:${DASH_PORT}"
+    networks:
+      default:
+
+networks:
+  default:
+    labels:
+      org.fiware: 'deployment'
+    ipam:
+      config:
+        - subnet: 172.18.1.0/24
+
+volumes:
+  mongo-db_db: ~
+  mongo-db_config: ~
+  crate-db_db: ~

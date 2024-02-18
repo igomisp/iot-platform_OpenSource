@@ -1,0 +1,29 @@
+# dotenv
+.env
+.env.*
+
+# virtualenv
+.venv
+venv/
+ENV/
+
+# Arduino secrets file
+esp32_secrets*.h
+
+# datadis token
+datadis_token.txt
+
+# consumption from datadis
+consumption*.json
+
+# raspberry pi AIRZONE token
+current_tokens.json
+
+# python cache
+*.pyc
+
+# vscode
+.vscode/
+
+# memory folder
+memory/_obsoletos
